@@ -1,4 +1,3 @@
-import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -7,12 +6,10 @@ from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
 
-SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "zotero.py"
-SPEC = importlib.util.spec_from_file_location("zotero", SCRIPT_PATH)
-assert SPEC is not None and SPEC.loader is not None
-zotero = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = zotero
-SPEC.loader.exec_module(zotero)
+SCRIPTS_PATH = Path(__file__).parents[1] / "scripts"
+sys.path.insert(0, str(SCRIPTS_PATH))
+
+from zotero_skill import core as zotero
 
 
 def json_response(rows, *, total=None, header_name="Total-Results"):
