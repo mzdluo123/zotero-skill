@@ -263,6 +263,29 @@ def response_header(response: Response, name: str) -> str | None:
     wanted = name.lower()
     return next((value for key, value in response.headers.items() if key.lower() == wanted), None)
 
+def api_get_all(
+    path: str, params: dict[str, str | int | bool | None] | None = None
+) -> list[Any]:
+    rows: list[Any] = []
+    start = 0
+    while True:
+        page_params = dict(params or {})
+        page_params.update({"limit": API_PAGE_LIMIT, "start": start})
+        separator = "&" if "?" in path else "?"
+        response = api_response(f"{path}{separator}{query(page_params)}")
+        page = parse_body(response)
+        if not isinstance(page, list):
+            exit_with(f"Expected a list response from {path}")
+
+        rows.extend(page)
+        total = total_results(response)
+        if not page or (total is not None and len(rows) >= total):
+            return rows
+        if total is None and len(page) < API_PAGE_LIMIT:
+            return rows
+        start += len(page)
+
+
 
 def authorization_file() -> Path:
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
@@ -494,8 +517,8 @@ def find_pdf_quote(path: Path, quote: str, page_number: int | None) -> PdfQuoteM
 def existing_annotation(
     attachment_key: str, quote: str, comment: str, position: str
 ) -> str | None:
-    annotations = api_get(
-        f"{LOCAL_USER}/items?{urllib.parse.urlencode({'itemType': 'annotation'})}"
+    annotations = api_get_all(
+        f"{LOCAL_USER}/items", {"itemType": "annotation"}
     )
     for child in annotations:
         data = child.get("data", {})
@@ -629,7 +652,7 @@ def count_bibtex_entries(text: str) -> int:
 
 
 def total_results(response: Response) -> int | None:
-    raw = response.headers.get("Total-Results")
+    raw = response_header(response, "Total-Results")
     return int(raw) if raw and raw.isdigit() else None
 
 
@@ -718,8 +741,7 @@ def find_item(*, item_key: str | None, query_text: str | None) -> dict[str, Any]
     if not query_text:
         exit_with("Provide --item-key or --query")
 
-    params = query({"q": query_text})
-    matches = api_get(f"{LOCAL_USER}/items/top?{params}")
+    matches = api_get_all(f"{LOCAL_USER}/items/top", {"q": query_text})
     if not matches:
         exit_with(f"No top-level Zotero items matched query: {query_text}")
     if len(matches) > 1:
@@ -832,13 +854,20 @@ def cmd_probe(args: argparse.Namespace) -> None:
 
 def cmd_inventory(args: argparse.Namespace) -> None:
     endpoint = "items" if args.include_children else "items/top"
-    params = query({"sort": "title", "direction": "asc"})
-    rows = [summarize_item(item) for item in api_get(f"{LOCAL_USER}/{endpoint}?{params}")]
+    rows = [
+        summarize_item(item)
+        for item in api_get_all(
+            f"{LOCAL_USER}/{endpoint}", {"sort": "title", "direction": "asc"}
+        )
+    ]
     dump_json(rows) if args.json else print_items(rows)
 
 
 def cmd_collections(args: argparse.Namespace) -> None:
-    rows = [summarize_collection(collection) for collection in api_get(f"{LOCAL_USER}/collections")]
+    rows = [
+        summarize_collection(collection)
+        for collection in api_get_all(f"{LOCAL_USER}/collections")
+    ]
     if args.json:
         dump_json(rows)
         return
@@ -848,7 +877,7 @@ def cmd_collections(args: argparse.Namespace) -> None:
 
 
 def cmd_tags(args: argparse.Namespace) -> None:
-    rows = [summarize_tag(tag) for tag in api_get(f"{LOCAL_USER}/tags")]
+    rows = [summarize_tag(tag) for tag in api_get_all(f"{LOCAL_USER}/tags")]
     if args.json:
         dump_json(rows)
         return
@@ -857,7 +886,7 @@ def cmd_tags(args: argparse.Namespace) -> None:
 
 
 def cmd_groups(args: argparse.Namespace) -> None:
-    rows = [summarize_group(group) for group in api_get(f"{LOCAL_USER}/groups")]
+    rows = [summarize_group(group) for group in api_get_all(f"{LOCAL_USER}/groups")]
     if args.json:
         dump_json(rows)
         return
@@ -866,8 +895,10 @@ def cmd_groups(args: argparse.Namespace) -> None:
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    params = query({"q": args.query})
-    rows = [summarize_item(item) for item in api_get(f"{LOCAL_USER}/items/top?{params}")]
+    rows = [
+        summarize_item(item)
+        for item in api_get_all(f"{LOCAL_USER}/items/top", {"q": args.query})
+    ]
     if args.with_bibtex_keys:
         for row in rows:
             bibtex = export_bibtex(row.get("key")) if row.get("key") else ""
@@ -891,9 +922,10 @@ def cmd_sync_bib(args: argparse.Namespace) -> None:
 
 
 def cmd_citations(args: argparse.Namespace) -> None:
-    params = query({"include": "data,citation", "style": args.style})
     rows: list[dict[str, Any]] = []
-    for item in api_get(f"{LOCAL_USER}/items/top?{params}"):
+    for item in api_get_all(
+        f"{LOCAL_USER}/items/top", {"include": "data,citation", "style": args.style}
+    ):
         row = summarize_item(item)
         row["citation"] = item.get("citation")
         rows.append(row)
@@ -905,7 +937,9 @@ def cmd_citations(args: argparse.Namespace) -> None:
 
 
 def cmd_children(args: argparse.Namespace) -> None:
-    data = api_get(f"{LOCAL_USER}/items/{urllib.parse.quote(args.item_key)}/children")
+    data = api_get_all(
+        f"{LOCAL_USER}/items/{urllib.parse.quote(args.item_key)}/children"
+    )
     rows = [summarize_item(item) for item in data]
     dump_json(rows) if args.json else print_items(rows)
 
